@@ -25,7 +25,6 @@ const adminErrorMessage = (userId) =>
   `user_id kamu: <code>${userId}</code>\n` +
   "Minta owner bot untuk menambahkan ID ini ke ADMIN_IDS di file .env";
 
-// logger sederhana (kelihatan di VPS)
 const log = (...args) => {
   const ts = new Date().toISOString();
   console.log(ts, "-", ...args);
