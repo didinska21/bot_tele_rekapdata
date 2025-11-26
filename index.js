@@ -2,10 +2,20 @@
 const { Telegraf } = require("telegraf");
 
 const { BOT_TOKEN, isAdmin, adminErrorMessage, log } = require("./config");
-const { TOKENS, addToken, updateToken, deleteToken,
-        getCategoryNames, getCategoryNameByIndex,
-        addCategory, renameCategory, deleteCategory,
-        addBotItem, updateBotItem, deleteBotItem } = require("./data");
+const {
+  TOKENS,
+  addToken,
+  updateToken,
+  deleteToken,
+  getCategoryNames,
+  getCategoryNameByIndex,
+  addCategory,
+  renameCategory,
+  deleteCategory,
+  addBotItem,
+  updateBotItem,
+  deleteBotItem,
+} = require("./data");
 const { getState, setState, clearState } = require("./state");
 const {
   mainMenuKeyboard,
@@ -13,10 +23,12 @@ const {
   tokensAddMenuKeyboard,
   botsCategoriesMenuKeyboard,
   botItemsMenuKeyboard,
+  cancelKeyboard,
   daftarBotInlineKeyboard,
+  tokenGroupsInlineKeyboard,
 } = require("./keyboards");
 const {
-  buildListTokenText,
+  buildListTokenTextByGroup,
   buildDaftarBotText,
   buildBotCategoryText,
 } = require("./textBuilders");
@@ -85,6 +97,7 @@ const parseYamlishTokens = (text) => {
 };
 
 const bot = new Telegraf(BOT_TOKEN);
+const CANCEL_TEXT = "❌ Batal";
 
 // ===== /start =====
 bot.start(async (ctx) => {
@@ -98,31 +111,46 @@ bot.start(async (ctx) => {
   );
 });
 
-// ===== CALLBACK (inline kategori bot) =====
+// ===== CALLBACK (inline kategori bot + grup token) =====
 bot.on("callback_query", async (ctx) => {
   const userId = ctx.from.id;
   const data = ctx.update.callback_query.data;
   log("CBQ", { userId, data });
 
+  // token group: irwan / din
+  if (data.startsWith("tokengrp:")) {
+    const group = data.split(":")[1] || "irwan";
+    const state = getState(userId);
+    setState(userId, { ...state, mode: "tokens_menu", currentTokenGroup: group });
+
+    return ctx
+      .editMessageText(buildListTokenTextByGroup(group), {
+        parse_mode: "HTML",
+        ...tokenGroupsInlineKeyboard(group),
+      })
+      .catch(() => {});
+  }
+
   if (data === "botcat:_none") {
     return ctx.answerCbQuery("Belum ada kategori bot.").catch(() => {});
   }
 
+  // kategori bot
   if (data.startsWith("botcat:")) {
     const category = data.split(":")[1];
 
-    // update state → sekarang mengelola item dalam kategori ini
-    setState(userId, { mode: "bot_category_menu", currentCategory: category });
+    setState(userId, {
+      mode: "bot_category_menu",
+      currentCategory: category,
+    });
 
-    // edit pesan list kategori → jadi list item kategori
     await ctx
       .editMessageText(buildBotCategoryText(category), {
         parse_mode: "HTML",
-        ...daftarBotInlineKeyboard(), // kategori tetap ada
+        ...daftarBotInlineKeyboard(),
       })
       .catch(() => {});
 
-    // kirim pesan baru untuk set reply keyboard CRUD item
     return ctx.reply(
       `Sedang mengelola kategori: ${category}\nPakai menu di bawah untuk tambah / edit / hapus bot.`,
       botItemsMenuKeyboard()
@@ -136,26 +164,99 @@ bot.on("callback_query", async (ctx) => {
 bot.on("text", async (ctx) => {
   const userId = ctx.from.id;
   const text = ctx.message.text.trim();
-  const state = getState(userId);
-  const mode = state.mode;
+  let state = getState(userId);
+  let mode = state.mode;
 
   log("MSG", { userId, mode, text });
 
-  // ===== MENU UTAMA =====
-  if (!mode) {
-    if (text === "🔐 List Token") {
-      setState(userId, { mode: "tokens_menu" });
-      const msg = buildListTokenText();
+  // ===== GLOBAL BATAL =====
+  if (text === CANCEL_TEXT) {
+    // baca ulang state ter-update
+    state = getState(userId);
+    mode = state.mode;
+
+    // mode-mode token
+    const tokenModes = [
+      "adding_token_single_email",
+      "adding_token_single_token",
+      "adding_token_single_username",
+      "adding_token_bulk",
+      "editing_token_select",
+      "editing_token_input",
+      "deleting_token_select",
+      "token_add_choice",
+    ];
+    if (tokenModes.includes(mode)) {
+      const group = state.currentTokenGroup || "irwan";
+      setState(userId, { mode: "tokens_menu", currentTokenGroup: group });
+      const msg =
+        "Dibatalkan.\n\n" + buildListTokenTextByGroup(group);
       return ctx.replyWithHTML(msg, tokensMenuKeyboard());
     }
-    if (text === "🤖 Daftar Bot") {
+
+    // mode kategori bot
+    const catModes = [
+      "bot_cat_add_name",
+      "bot_cat_edit_input",
+      "bot_cat_delete_select",
+    ];
+    if (catModes.includes(mode)) {
       setState(userId, { mode: "bots_menu", currentCategory: null });
-      // pesan dengan inline kategori
       await ctx.replyWithHTML(
         buildDaftarBotText(),
         daftarBotInlineKeyboard()
       );
-      // pesan kedua untuk set reply keyboard kategori CRUD
+      return ctx.reply(
+        "Dibatalkan. Kelola kategori bot dengan menu di bawah:",
+        botsCategoriesMenuKeyboard()
+      );
+    }
+
+    // mode item bot
+    const itemModes = ["bot_item_add", "bot_item_edit", "bot_item_delete"];
+    if (itemModes.includes(mode)) {
+      const category = state.currentCategory;
+      if (category) {
+        setState(userId, {
+          mode: "bot_category_menu",
+          currentCategory: category,
+        });
+        const msg =
+          "Dibatalkan.\n\n" + buildBotCategoryText(category);
+        return ctx.replyWithHTML(msg, botItemsMenuKeyboard());
+      }
+    }
+
+    // fallback: ke menu utama
+    clearState(userId);
+    return ctx.replyWithHTML(
+      "Dibatalkan. Kembali ke menu utama.",
+      mainMenuKeyboard()
+    );
+  }
+
+  // ===== MENU UTAMA =====
+  if (!mode) {
+    if (text === "🔐 List Token") {
+      const group = "irwan";
+      setState(userId, { mode: "tokens_menu", currentTokenGroup: group });
+
+      await ctx.replyWithHTML(
+        buildListTokenTextByGroup(group),
+        tokenGroupsInlineKeyboard(group)
+      );
+      return ctx.reply(
+        "Kelola token grup ini dengan menu di bawah:",
+        tokensMenuKeyboard()
+      );
+    }
+
+    if (text === "🤖 Daftar Bot") {
+      setState(userId, { mode: "bots_menu", currentCategory: null });
+      await ctx.replyWithHTML(
+        buildDaftarBotText(),
+        daftarBotInlineKeyboard()
+      );
       return ctx.reply(
         "Kelola kategori bot dengan menu di bawah:",
         botsCategoriesMenuKeyboard()
@@ -164,12 +265,17 @@ bot.on("text", async (ctx) => {
   }
 
   // =========================
-  // MENU LIST TOKEN (CRUD token)
+  // MENU LIST TOKEN (per grup)
   // =========================
   if (mode === "tokens_menu") {
+    const group = state.currentTokenGroup || "irwan";
+
     if (text === "➕ Tambah") {
       if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
-      setState(userId, { mode: "token_add_choice" });
+      setState(userId, {
+        mode: "token_add_choice",
+        currentTokenGroup: group,
+      });
       return ctx.replyWithHTML(
         "Pilih cara tambah data token:",
         tokensAddMenuKeyboard()
@@ -178,20 +284,32 @@ bot.on("text", async (ctx) => {
 
     if (text === "🗑 Hapus") {
       if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
-      setState(userId, { mode: "deleting_token_select" });
+      setState(userId, {
+        mode: "deleting_token_select",
+        currentTokenGroup: group,
+      });
       const msg =
-        buildListTokenText() +
+        buildListTokenTextByGroup(group) +
         "\n\n🗑 Kirim nomor token yang mau dihapus.\nContoh: <code>1</code>";
-      return ctx.replyWithHTML(msg, { parse_mode: "HTML" });
+      return ctx.replyWithHTML(msg, {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
 
     if (text === "✏️ Edit") {
       if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
-      setState(userId, { mode: "editing_token_select" });
+      setState(userId, {
+        mode: "editing_token_select",
+        currentTokenGroup: group,
+      });
       const msg =
-        buildListTokenText() +
+        buildListTokenTextByGroup(group) +
         "\n\n✏️ Kirim nomor token yang mau di-edit.\nContoh: <code>1</code>";
-      return ctx.replyWithHTML(msg, { parse_mode: "HTML" });
+      return ctx.replyWithHTML(msg, {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
 
     if (text === "⬅️ Kembali") {
@@ -202,21 +320,27 @@ bot.on("text", async (ctx) => {
 
   // ===== PILIH TAMBAH TOKEN (SATUAN/MASSAL) =====
   if (mode === "token_add_choice") {
+    const group = state.currentTokenGroup || "irwan";
+
     if (text === "➕ Satuan") {
       if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
       setState(userId, {
         mode: "adding_token_single_email",
+        currentTokenGroup: group,
         tempToken: {},
       });
       return ctx.replyWithHTML(
         "📧 Silakan kirim email:\nContoh: <code>user@example.com</code>",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
 
     if (text === "📥 Massal") {
       if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
-      setState(userId, { mode: "adding_token_bulk" });
+      setState(userId, {
+        mode: "adding_token_bulk",
+        currentTokenGroup: group,
+      });
       return ctx.replyWithHTML(
         "📥 <b>Tambah Data Massal (YAML-ish)</b>\n\n" +
           "Kirim data dengan format per-blok, dipisah dengan <code>---</code>:\n\n" +
@@ -227,14 +351,8 @@ bot.on("text", async (ctx) => {
           "email: user2@example.com\n" +
           "token: 999999:BBB\n" +
           "username:\n",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
-    }
-
-    if (text === "⬅️ Batal") {
-      setState(userId, { mode: "tokens_menu" });
-      const msg = buildListTokenText();
-      return ctx.replyWithHTML(msg, tokensMenuKeyboard());
     }
   }
 
@@ -247,7 +365,7 @@ bot.on("text", async (ctx) => {
         "❌ Format email tidak valid.\n" +
           "Gunakan format: <code>nama@domain.com</code>\n" +
           "Coba kirim lagi.",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
 
@@ -258,7 +376,7 @@ bot.on("text", async (ctx) => {
 
     return ctx.replyWithHTML(
       "🔑 Silakan kirim token:\nContoh: <code>123456:ABCDEF</code>",
-      { parse_mode: "HTML" }
+      { parse_mode: "HTML", ...cancelKeyboard() }
     );
   }
 
@@ -270,7 +388,7 @@ bot.on("text", async (ctx) => {
         "❌ Format token tidak valid.\n" +
           "Token minimal 5 karakter dan tidak boleh ada spasi.\n" +
           "Coba kirim ulang token yang benar.",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
 
@@ -285,7 +403,7 @@ bot.on("text", async (ctx) => {
     return ctx.replyWithHTML(
       "👤 Kirim username (opsional).\n\n" +
         "Jika tidak ingin mengisi, ketik: <code>skip</code>",
-      { parse_mode: "HTML" }
+      { parse_mode: "HTML", ...cancelKeyboard() }
     );
   }
 
@@ -293,6 +411,7 @@ bot.on("text", async (ctx) => {
     if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
 
     const temp = getState(userId).tempToken || {};
+    const group = state.currentTokenGroup || "irwan";
     let username = "";
 
     if (text.toLowerCase() === "skip") {
@@ -303,7 +422,7 @@ bot.on("text", async (ctx) => {
         return ctx.replyWithHTML(
           "❌ Username tidak valid.\n" +
             "Kirim username atau ketik <code>skip</code>.",
-          { parse_mode: "HTML" }
+          { parse_mode: "HTML", ...cancelKeyboard() }
         );
       }
     }
@@ -314,12 +433,14 @@ bot.on("text", async (ctx) => {
       email: temp.email,
       token: temp.token,
       username: temp.username,
+      group,
     });
 
-    setState(userId, { mode: "tokens_menu" });
+    setState(userId, { mode: "tokens_menu", currentTokenGroup: group });
 
     const msg =
-      "✅ Data baru berhasil ditambahkan.\n\n" + buildListTokenText();
+      "✅ Data baru berhasil ditambahkan.\n\n" +
+      buildListTokenTextByGroup(group);
     return ctx.replyWithHTML(msg, tokensMenuKeyboard());
   }
 
@@ -327,6 +448,7 @@ bot.on("text", async (ctx) => {
   if (mode === "adding_token_bulk") {
     if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
 
+    const group = state.currentTokenGroup || "irwan";
     const { items, errors } = parseYamlishTokens(text);
 
     if (errors.length > 0) {
@@ -334,14 +456,14 @@ bot.on("text", async (ctx) => {
         "❌ Terjadi kesalahan pada data massal:\n\n" +
           errors.map((e) => `- ${e}`).join("\n") +
           "\n\nPerbaiki dan kirim ulang.",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
 
     if (!items.length) {
       return ctx.replyWithHTML(
         "Tidak ada blok data yang terbaca.\nPastikan format sudah benar.",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
 
@@ -350,43 +472,54 @@ bot.on("text", async (ctx) => {
         email: obj.email,
         token: obj.token,
         username: obj.username || "",
+        group,
       });
     });
 
-    setState(userId, { mode: "tokens_menu" });
+    setState(userId, { mode: "tokens_menu", currentTokenGroup: group });
 
     const msg =
       `✅ Berhasil menambahkan ${items.length} data token.\n\n` +
-      buildListTokenText();
+      buildListTokenTextByGroup(group);
     return ctx.replyWithHTML(msg, tokensMenuKeyboard());
   }
 
-  // ===== EDIT TOKEN PILIH NOMOR =====
+  // ===== EDIT TOKEN PILIH NOMOR (per grup) =====
   if (mode === "editing_token_select") {
     if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+
+    const group = state.currentTokenGroup || "irwan";
+    const list = require("./data").getTokensByGroup(group);
 
     const num = Number(text);
     if (!Number.isInteger(num)) {
       return ctx.replyWithHTML(
         "Nomor tidak valid. Kirim angka saja, contoh: <code>1</code>",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
-    if (num < 1 || num > TOKENS.length) {
-      return ctx.replyWithHTML("Nomor di luar range.");
+    if (num < 1 || num > list.length) {
+      return ctx.replyWithHTML("Nomor di luar range.", {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
 
-    const item = TOKENS[num - 1];
-    setState(userId, { mode: "editing_token_input", editIndex: num - 1 });
+    const { index, token } = list[num - 1];
+    setState(userId, {
+      mode: "editing_token_input",
+      editTokenIndex: index,
+      currentTokenGroup: group,
+    });
 
     return ctx.replyWithHTML(
       "Data saat ini:\n" +
-        `username: ${item.username || "(kosong)"}\n` +
-        `email: ${item.email || "(kosong)"}\n` +
-        `token: <code>${item.token || "(kosong)"}</code>\n\n` +
+        `username: ${token.username || "(kosong)"}\n` +
+        `email: ${token.email || "(kosong)"}\n` +
+        `token: <code>${token.token || "(kosong)"}</code>\n\n` +
         "Kirim data baru dengan format:\n" +
         "<code>email;token;[username optional]</code>",
-      { parse_mode: "HTML" }
+      { parse_mode: "HTML", ...cancelKeyboard() }
     );
   }
 
@@ -394,41 +527,52 @@ bot.on("text", async (ctx) => {
   if (mode === "editing_token_input") {
     if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
 
-    const idx = getState(userId).editIndex;
+    const group = state.currentTokenGroup || "irwan";
+    const idx = state.editTokenIndex;
     if (idx == null || idx >= TOKENS.length) {
-      setState(userId, { mode: "tokens_menu" });
-      return ctx.replyWithHTML("Index token tidak ditemukan.");
+      setState(userId, { mode: "tokens_menu", currentTokenGroup: group });
+      return ctx.replyWithHTML("Index token tidak ditemukan.", tokensMenuKeyboard());
     }
 
     const parts = text.split(";").map((s) => s.trim());
     if (parts.length < 2) {
       return ctx.replyWithHTML(
         "Format salah.\nGunakan: <code>email;token;[username]</code>",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
 
     const email = parts[0];
-    const token = parts[1];
+    const tokenStr = parts[1];
     const username = parts[2] || "";
-
     if (!isValidEmail(email)) {
       return ctx.replyWithHTML(
         "❌ Email tidak valid.\nGunakan format: <code>nama@domain.com</code>",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
-    if (!isValidToken(token)) {
+    if (!isValidToken(tokenStr)) {
       return ctx.replyWithHTML(
         "❌ Token tidak valid.\nMinimal 5 karakter dan tidak boleh spasi.",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
 
-    updateToken(idx, { email, token, username });
-    setState(userId, { mode: "tokens_menu" });
+    const old = TOKENS[idx] || {};
+    const tokenGroup = old.group || group;
 
-    const msg = "✅ Token berhasil di-update.\n\n" + buildListTokenText();
+    updateToken(idx, {
+      email,
+      token: tokenStr,
+      username,
+      group: tokenGroup,
+    });
+
+    setState(userId, { mode: "tokens_menu", currentTokenGroup: tokenGroup });
+
+    const msg =
+      "✅ Token berhasil di-update.\n\n" +
+      buildListTokenTextByGroup(tokenGroup);
     return ctx.replyWithHTML(msg, tokensMenuKeyboard());
   }
 
@@ -436,26 +580,33 @@ bot.on("text", async (ctx) => {
   if (mode === "deleting_token_select") {
     if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
 
+    const group = state.currentTokenGroup || "irwan";
+    const list = require("./data").getTokensByGroup(group);
+
     const num = Number(text);
     if (!Number.isInteger(num)) {
       return ctx.replyWithHTML(
         "Nomor tidak valid. Kirim angka saja, contoh: <code>1</code>",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
-    if (num < 1 || num > TOKENS.length) {
-      return ctx.replyWithHTML("Nomor di luar range.");
+    if (num < 1 || num > list.length) {
+      return ctx.replyWithHTML("Nomor di luar range.", {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
 
-    const deleted = TOKENS[num - 1];
-    deleteToken(num - 1);
-    setState(userId, { mode: "tokens_menu" });
+    const { index, token } = list[num - 1];
+    deleteToken(index);
+
+    setState(userId, { mode: "tokens_menu", currentTokenGroup: group });
 
     const msg =
       "✅ Token berikut telah dihapus:\n" +
-      `email: ${deleted.email}\n` +
-      `token: <code>${deleted.token}</code>\n\n` +
-      buildListTokenText();
+      `email: ${token.email}\n` +
+      `token: <code>${token.token}</code>\n\n` +
+      buildListTokenTextByGroup(group);
     return ctx.replyWithHTML(msg, tokensMenuKeyboard());
   }
 
@@ -468,7 +619,7 @@ bot.on("text", async (ctx) => {
       setState(userId, { mode: "bot_cat_add_name" });
       return ctx.replyWithHTML(
         "Kirim nama kategori bot baru.\nContoh: <code>pin</code>",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
 
@@ -486,7 +637,10 @@ bot.on("text", async (ctx) => {
         "Kirim format: <code>nomor;nama_baru</code>",
         "Contoh: <code>1;pin-baru</code>"
       );
-      return ctx.replyWithHTML(lines.join("\n"), { parse_mode: "HTML" });
+      return ctx.replyWithHTML(lines.join("\n"), {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
 
     if (text === "🗑 Hapus") {
@@ -499,7 +653,10 @@ bot.on("text", async (ctx) => {
       const lines = ["Pilih nomor kategori yang mau dihapus:"];
       names.forEach((n, i) => lines.push(`${i + 1}. ${n}`));
       lines.push("Kirim angka, contoh: <code>1</code>");
-      return ctx.replyWithHTML(lines.join("\n"), { parse_mode: "HTML" });
+      return ctx.replyWithHTML(lines.join("\n"), {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
 
     if (text === "⬅️ Kembali") {
@@ -513,10 +670,16 @@ bot.on("text", async (ctx) => {
     if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
     const name = text.trim();
     if (!name) {
-      return ctx.replyWithHTML("Nama kategori tidak boleh kosong.");
+      return ctx.replyWithHTML("Nama kategori tidak boleh kosong.", {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
     if (!addCategory(name)) {
-      return ctx.replyWithHTML("Nama kategori sudah ada.");
+      return ctx.replyWithHTML("Nama kategori sudah ada.", {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
 
     setState(userId, { mode: "bots_menu", currentCategory: null });
@@ -538,22 +701,29 @@ bot.on("text", async (ctx) => {
     if (parts.length !== 2) {
       return ctx.replyWithHTML(
         "Format salah.\nGunakan: <code>nomor;nama_baru</code>",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
     const num = Number(parts[0]);
     const newName = parts[1];
     if (!Number.isInteger(num)) {
-      return ctx.replyWithHTML("Nomor tidak valid.");
+      return ctx.replyWithHTML("Nomor tidak valid.", {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
     const oldName = getCategoryNameByIndex(num - 1);
     if (!oldName) {
-      return ctx.replyWithHTML("Nomor kategori tidak ditemukan.");
+      return ctx.replyWithHTML("Nomor kategori tidak ditemukan.", {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
 
     if (!renameCategory(oldName, newName)) {
       return ctx.replyWithHTML(
-        "Gagal rename kategori. Mungkin nama baru sudah dipakai."
+        "Gagal rename kategori. Mungkin nama baru sudah dipakai.",
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
 
@@ -575,11 +745,17 @@ bot.on("text", async (ctx) => {
 
     const num = Number(text);
     if (!Number.isInteger(num)) {
-      return ctx.replyWithHTML("Nomor tidak valid.");
+      return ctx.replyWithHTML("Nomor tidak valid.", {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
     const name = getCategoryNameByIndex(num - 1);
     if (!name) {
-      return ctx.replyWithHTML("Nomor kategori tidak ditemukan.");
+      return ctx.replyWithHTML("Nomor kategori tidak ditemukan.", {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
 
     deleteCategory(name);
@@ -610,7 +786,7 @@ bot.on("text", async (ctx) => {
           "<code>lokasi_vps;token;[username optional]</code>\n\n" +
           "Contoh:\n" +
           "<code>SG-1;123456:ABCDEF;@botakun</code>",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
 
@@ -623,7 +799,10 @@ bot.on("text", async (ctx) => {
         "<code>nomor;lokasi_vps;token;[username optional]</code>\n" +
         "Contoh:\n" +
         "<code>1;SG-2;999999:NEWTOKEN;@usernamebaru</code>";
-      return ctx.replyWithHTML(msg, { parse_mode: "HTML" });
+      return ctx.replyWithHTML(msg, {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
 
     if (text === "🗑 Hapus") {
@@ -633,11 +812,13 @@ bot.on("text", async (ctx) => {
         buildBotCategoryText(category) +
         "\n\n🗑 Kirim nomor bot yang mau dihapus.\n" +
         "Contoh: <code>1</code>";
-      return ctx.replyWithHTML(msg, { parse_mode: "HTML" });
+      return ctx.replyWithHTML(msg, {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
 
     if (text === "⬅️ Kembali") {
-      // kembali ke daftar kategori
       setState(userId, { mode: "bots_menu", currentCategory: null });
       await ctx.replyWithHTML(
         buildDaftarBotText(),
@@ -658,23 +839,26 @@ bot.on("text", async (ctx) => {
     if (parts.length < 2) {
       return ctx.replyWithHTML(
         "Format salah.\nGunakan: <code>lokasi_vps;token;[username]</code>",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
     const lokasi_vps = parts[0];
-    const token = parts[1];
+    const tokenStr = parts[1];
     const username = parts[2] || "";
 
-    if (!isValidToken(token)) {
+    if (!isValidToken(tokenStr)) {
       return ctx.replyWithHTML(
         "❌ Token tidak valid.\nMinimal 5 karakter dan tidak boleh spasi.",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
 
-    addBotItem(category, { lokasi_vps, username, token });
+    addBotItem(category, { lokasi_vps, username, token: tokenStr });
 
-    setState(userId, { mode: "bot_category_menu", currentCategory: category });
+    setState(userId, {
+      mode: "bot_category_menu",
+      currentCategory: category,
+    });
 
     const msg =
       `✅ Bot baru ditambahkan di kategori ${category}.\n\n` +
@@ -690,29 +874,37 @@ bot.on("text", async (ctx) => {
     if (parts.length < 3) {
       return ctx.replyWithHTML(
         "Format salah.\nGunakan: <code>nomor;lokasi_vps;token;[username]</code>",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
     const num = Number(parts[0]);
     if (!Number.isInteger(num)) {
-      return ctx.replyWithHTML("Nomor tidak valid.");
+      return ctx.replyWithHTML("Nomor tidak valid.", {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
     const lokasi_vps = parts[1];
-    const token = parts[2];
+    const tokenStr = parts[2];
     const username = parts[3] || "";
-
-    if (!isValidToken(token)) {
+    if (!isValidToken(tokenStr)) {
       return ctx.replyWithHTML(
         "❌ Token tidak valid.\nMinimal 5 karakter dan tidak boleh spasi.",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
 
-    if (!updateBotItem(category, num - 1, { lokasi_vps, username, token })) {
-      return ctx.replyWithHTML("Index bot tidak ditemukan.");
+    if (!updateBotItem(category, num - 1, { lokasi_vps, username, token: tokenStr })) {
+      return ctx.replyWithHTML("Index bot tidak ditemukan.", {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
 
-    setState(userId, { mode: "bot_category_menu", currentCategory: category });
+    setState(userId, {
+      mode: "bot_category_menu",
+      currentCategory: category,
+    });
 
     const msg =
       "✅ Data bot berhasil di-update.\n\n" +
@@ -728,15 +920,21 @@ bot.on("text", async (ctx) => {
     if (!Number.isInteger(num)) {
       return ctx.replyWithHTML(
         "Nomor tidak valid. Kirim angka saja, contoh: <code>1</code>",
-        { parse_mode: "HTML" }
+        { parse_mode: "HTML", ...cancelKeyboard() }
       );
     }
 
     if (!deleteBotItem(category, num - 1)) {
-      return ctx.replyWithHTML("Index bot tidak ditemukan.");
+      return ctx.replyWithHTML("Index bot tidak ditemukan.", {
+        parse_mode: "HTML",
+        ...cancelKeyboard(),
+      });
     }
 
-    setState(userId, { mode: "bot_category_menu", currentCategory: category });
+    setState(userId, {
+      mode: "bot_category_menu",
+      currentCategory: category,
+    });
 
     const msg =
       "✅ Bot berhasil dihapus.\n\n" + buildBotCategoryText(category);
