@@ -2,13 +2,17 @@
 const { Telegraf } = require("telegraf");
 
 const { BOT_TOKEN, isAdmin, adminErrorMessage, log } = require("./config");
-const { TOKENS } = require("./data");
+const { TOKENS, addToken, updateToken, deleteToken,
+        getCategoryNames, getCategoryNameByIndex,
+        addCategory, renameCategory, deleteCategory,
+        addBotItem, updateBotItem, deleteBotItem } = require("./data");
 const { getState, setState, clearState } = require("./state");
 const {
   mainMenuKeyboard,
   tokensMenuKeyboard,
   tokensAddMenuKeyboard,
-  botsMenuKeyboard,
+  botsCategoriesMenuKeyboard,
+  botItemsMenuKeyboard,
   daftarBotInlineKeyboard,
 } = require("./keyboards");
 const {
@@ -94,28 +98,35 @@ bot.start(async (ctx) => {
   );
 });
 
-// ===== CALLBACK UNTUK INLINE (DAFTAR BOT) =====
+// ===== CALLBACK (inline kategori bot) =====
 bot.on("callback_query", async (ctx) => {
   const userId = ctx.from.id;
   const data = ctx.update.callback_query.data;
   log("CBQ", { userId, data });
 
-  // klik "Belum ada kategori"
   if (data === "botcat:_none") {
     return ctx.answerCbQuery("Belum ada kategori bot.").catch(() => {});
   }
 
   if (data.startsWith("botcat:")) {
     const category = data.split(":")[1];
-    const msg = buildBotCategoryText(category);
-    // edit pesan daftar bot supaya isinya jadi list kategori terpilih,
-    // tapi inline keyboard kategori tetap muncul
-    return ctx
-      .editMessageText(msg, {
+
+    // update state → sekarang mengelola item dalam kategori ini
+    setState(userId, { mode: "bot_category_menu", currentCategory: category });
+
+    // edit pesan list kategori → jadi list item kategori
+    await ctx
+      .editMessageText(buildBotCategoryText(category), {
         parse_mode: "HTML",
-        ...daftarBotInlineKeyboard(),
+        ...daftarBotInlineKeyboard(), // kategori tetap ada
       })
       .catch(() => {});
+
+    // kirim pesan baru untuk set reply keyboard CRUD item
+    return ctx.reply(
+      `Sedang mengelola kategori: ${category}\nPakai menu di bawah untuk tambah / edit / hapus bot.`,
+      botItemsMenuKeyboard()
+    );
   }
 
   await ctx.answerCbQuery().catch(() => {});
@@ -138,20 +149,23 @@ bot.on("text", async (ctx) => {
       return ctx.replyWithHTML(msg, tokensMenuKeyboard());
     }
     if (text === "🤖 Daftar Bot") {
-      setState(userId, { mode: "bots_menu" });
-      // 1) kirim pesan dengan inline kategori bot
+      setState(userId, { mode: "bots_menu", currentCategory: null });
+      // pesan dengan inline kategori
       await ctx.replyWithHTML(
         buildDaftarBotText(),
         daftarBotInlineKeyboard()
       );
-      // 2) kirim pesan untuk set reply keyboard CRUD di bawah
-      return ctx.reply("Pilih menu di bawah untuk kelola bot:", botsMenuKeyboard());
+      // pesan kedua untuk set reply keyboard kategori CRUD
+      return ctx.reply(
+        "Kelola kategori bot dengan menu di bawah:",
+        botsCategoriesMenuKeyboard()
+      );
     }
   }
 
-  // ==============
-  // MENU LIST TOKEN
-  // ==============
+  // =========================
+  // MENU LIST TOKEN (CRUD token)
+  // =========================
   if (mode === "tokens_menu") {
     if (text === "➕ Tambah") {
       if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
@@ -182,10 +196,7 @@ bot.on("text", async (ctx) => {
 
     if (text === "⬅️ Kembali") {
       clearState(userId);
-      return ctx.replyWithHTML(
-        "Kembali ke menu utama.",
-        mainMenuKeyboard()
-      );
+      return ctx.replyWithHTML("Kembali ke menu utama.", mainMenuKeyboard());
     }
   }
 
@@ -299,7 +310,7 @@ bot.on("text", async (ctx) => {
 
     temp.username = username;
 
-    TOKENS.push({
+    addToken({
       email: temp.email,
       token: temp.token,
       username: temp.username,
@@ -335,7 +346,7 @@ bot.on("text", async (ctx) => {
     }
 
     items.forEach((obj) => {
-      TOKENS.push({
+      addToken({
         email: obj.email,
         token: obj.token,
         username: obj.username || "",
@@ -414,7 +425,7 @@ bot.on("text", async (ctx) => {
       );
     }
 
-    TOKENS[idx] = { email, token, username };
+    updateToken(idx, { email, token, username });
     setState(userId, { mode: "tokens_menu" });
 
     const msg = "✅ Token berhasil di-update.\n\n" + buildListTokenText();
@@ -436,7 +447,8 @@ bot.on("text", async (ctx) => {
       return ctx.replyWithHTML("Nomor di luar range.");
     }
 
-    const deleted = TOKENS.splice(num - 1, 1)[0];
+    const deleted = TOKENS[num - 1];
+    deleteToken(num - 1);
     setState(userId, { mode: "tokens_menu" });
 
     const msg =
@@ -447,40 +459,288 @@ bot.on("text", async (ctx) => {
     return ctx.replyWithHTML(msg, tokensMenuKeyboard());
   }
 
-  // ===== MENU DAFTAR BOT (CRUD – sementara placeholder logika) =====
+  // =========================
+  // MENU DAFTAR BOT – LEVEL KATEGORI
+  // =========================
   if (mode === "bots_menu") {
     if (text === "➕ Tambah") {
-      // nanti bisa dikembangin (tambah kategori / tambah bot)
+      if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+      setState(userId, { mode: "bot_cat_add_name" });
       return ctx.replyWithHTML(
-        "Fitur tambah di Daftar Bot belum diimplementasi penuh.\n" +
-          "Sekarang baru tampilan kategori & list per kategori.",
-        botsMenuKeyboard()
-      );
-    }
-
-    if (text === "🗑 Hapus") {
-      return ctx.replyWithHTML(
-        "Fitur hapus di Daftar Bot belum diimplementasi penuh.\n" +
-          "Bisa kamu tambahkan sendiri di index.js (mode 'bots_menu').",
-        botsMenuKeyboard()
+        "Kirim nama kategori bot baru.\nContoh: <code>pin</code>",
+        { parse_mode: "HTML" }
       );
     }
 
     if (text === "✏️ Edit") {
-      return ctx.replyWithHTML(
-        "Fitur edit di Daftar Bot belum diimplementasi penuh.\n" +
-          "Nanti bisa diatur untuk rename kategori / edit bot per kategori.",
-        botsMenuKeyboard()
+      if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+      const names = getCategoryNames();
+      if (!names.length) {
+        return ctx.replyWithHTML("Belum ada kategori bot.");
+      }
+      setState(userId, { mode: "bot_cat_edit_input" });
+      const lines = ["Daftar kategori:"];
+      names.forEach((n, i) => lines.push(`${i + 1}. ${n}`));
+      lines.push(
+        "",
+        "Kirim format: <code>nomor;nama_baru</code>",
+        "Contoh: <code>1;pin-baru</code>"
       );
+      return ctx.replyWithHTML(lines.join("\n"), { parse_mode: "HTML" });
+    }
+
+    if (text === "🗑 Hapus") {
+      if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+      const names = getCategoryNames();
+      if (!names.length) {
+        return ctx.replyWithHTML("Belum ada kategori bot.");
+      }
+      setState(userId, { mode: "bot_cat_delete_select" });
+      const lines = ["Pilih nomor kategori yang mau dihapus:"];
+      names.forEach((n, i) => lines.push(`${i + 1}. ${n}`));
+      lines.push("Kirim angka, contoh: <code>1</code>");
+      return ctx.replyWithHTML(lines.join("\n"), { parse_mode: "HTML" });
     }
 
     if (text === "⬅️ Kembali") {
       clearState(userId);
+      return ctx.replyWithHTML("Kembali ke menu utama.", mainMenuKeyboard());
+    }
+  }
+
+  // ===== TAMBAH KATEGORI BOT =====
+  if (mode === "bot_cat_add_name") {
+    if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+    const name = text.trim();
+    if (!name) {
+      return ctx.replyWithHTML("Nama kategori tidak boleh kosong.");
+    }
+    if (!addCategory(name)) {
+      return ctx.replyWithHTML("Nama kategori sudah ada.");
+    }
+
+    setState(userId, { mode: "bots_menu", currentCategory: null });
+    await ctx.replyWithHTML(
+      "✅ Kategori bot baru ditambahkan.\n\n" + buildDaftarBotText(),
+      daftarBotInlineKeyboard()
+    );
+    return ctx.reply(
+      "Kelola kategori bot dengan menu di bawah:",
+      botsCategoriesMenuKeyboard()
+    );
+  }
+
+  // ===== EDIT KATEGORI BOT =====
+  if (mode === "bot_cat_edit_input") {
+    if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+
+    const parts = text.split(";").map((s) => s.trim());
+    if (parts.length !== 2) {
       return ctx.replyWithHTML(
-        "Kembali ke menu utama.",
-        mainMenuKeyboard()
+        "Format salah.\nGunakan: <code>nomor;nama_baru</code>",
+        { parse_mode: "HTML" }
       );
     }
+    const num = Number(parts[0]);
+    const newName = parts[1];
+    if (!Number.isInteger(num)) {
+      return ctx.replyWithHTML("Nomor tidak valid.");
+    }
+    const oldName = getCategoryNameByIndex(num - 1);
+    if (!oldName) {
+      return ctx.replyWithHTML("Nomor kategori tidak ditemukan.");
+    }
+
+    if (!renameCategory(oldName, newName)) {
+      return ctx.replyWithHTML(
+        "Gagal rename kategori. Mungkin nama baru sudah dipakai."
+      );
+    }
+
+    setState(userId, { mode: "bots_menu", currentCategory: null });
+    await ctx.replyWithHTML(
+      `✅ Kategori '${oldName}' di-rename menjadi '${newName}'.\n\n` +
+        buildDaftarBotText(),
+      daftarBotInlineKeyboard()
+    );
+    return ctx.reply(
+      "Kelola kategori bot dengan menu di bawah:",
+      botsCategoriesMenuKeyboard()
+    );
+  }
+
+  // ===== HAPUS KATEGORI BOT =====
+  if (mode === "bot_cat_delete_select") {
+    if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+
+    const num = Number(text);
+    if (!Number.isInteger(num)) {
+      return ctx.replyWithHTML("Nomor tidak valid.");
+    }
+    const name = getCategoryNameByIndex(num - 1);
+    if (!name) {
+      return ctx.replyWithHTML("Nomor kategori tidak ditemukan.");
+    }
+
+    deleteCategory(name);
+
+    setState(userId, { mode: "bots_menu", currentCategory: null });
+    await ctx.replyWithHTML(
+      `✅ Kategori '${name}' telah dihapus.\n\n` + buildDaftarBotText(),
+      daftarBotInlineKeyboard()
+    );
+    return ctx.reply(
+      "Kelola kategori bot dengan menu di bawah:",
+      botsCategoriesMenuKeyboard()
+    );
+  }
+
+  // =========================
+  // MENU DI DALAM KATEGORI BOT (CRUD item)
+  // =========================
+  if (mode === "bot_category_menu") {
+    const category = state.currentCategory;
+
+    if (text === "➕ Tambah") {
+      if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+      setState(userId, { mode: "bot_item_add", currentCategory: category });
+      return ctx.replyWithHTML(
+        `Tambah bot di kategori <b>${category}</b>.\n` +
+          "Kirim data dengan format:\n" +
+          "<code>lokasi_vps;token;[username optional]</code>\n\n" +
+          "Contoh:\n" +
+          "<code>SG-1;123456:ABCDEF;@botakun</code>",
+        { parse_mode: "HTML" }
+      );
+    }
+
+    if (text === "✏️ Edit") {
+      if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+      setState(userId, { mode: "bot_item_edit", currentCategory: category });
+      const msg =
+        buildBotCategoryText(category) +
+        "\n\n✏️ Kirim format:\n" +
+        "<code>nomor;lokasi_vps;token;[username optional]</code>\n" +
+        "Contoh:\n" +
+        "<code>1;SG-2;999999:NEWTOKEN;@usernamebaru</code>";
+      return ctx.replyWithHTML(msg, { parse_mode: "HTML" });
+    }
+
+    if (text === "🗑 Hapus") {
+      if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+      setState(userId, { mode: "bot_item_delete", currentCategory: category });
+      const msg =
+        buildBotCategoryText(category) +
+        "\n\n🗑 Kirim nomor bot yang mau dihapus.\n" +
+        "Contoh: <code>1</code>";
+      return ctx.replyWithHTML(msg, { parse_mode: "HTML" });
+    }
+
+    if (text === "⬅️ Kembali") {
+      // kembali ke daftar kategori
+      setState(userId, { mode: "bots_menu", currentCategory: null });
+      await ctx.replyWithHTML(
+        buildDaftarBotText(),
+        daftarBotInlineKeyboard()
+      );
+      return ctx.reply(
+        "Kelola kategori bot dengan menu di bawah:",
+        botsCategoriesMenuKeyboard()
+      );
+    }
+  }
+
+  // ===== TAMBAH ITEM BOT =====
+  if (mode === "bot_item_add") {
+    if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+    const category = state.currentCategory;
+    const parts = text.split(";").map((s) => s.trim());
+    if (parts.length < 2) {
+      return ctx.replyWithHTML(
+        "Format salah.\nGunakan: <code>lokasi_vps;token;[username]</code>",
+        { parse_mode: "HTML" }
+      );
+    }
+    const lokasi_vps = parts[0];
+    const token = parts[1];
+    const username = parts[2] || "";
+
+    if (!isValidToken(token)) {
+      return ctx.replyWithHTML(
+        "❌ Token tidak valid.\nMinimal 5 karakter dan tidak boleh spasi.",
+        { parse_mode: "HTML" }
+      );
+    }
+
+    addBotItem(category, { lokasi_vps, username, token });
+
+    setState(userId, { mode: "bot_category_menu", currentCategory: category });
+
+    const msg =
+      `✅ Bot baru ditambahkan di kategori ${category}.\n\n` +
+      buildBotCategoryText(category);
+    return ctx.replyWithHTML(msg, botItemsMenuKeyboard());
+  }
+
+  // ===== EDIT ITEM BOT =====
+  if (mode === "bot_item_edit") {
+    if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+    const category = state.currentCategory;
+    const parts = text.split(";").map((s) => s.trim());
+    if (parts.length < 3) {
+      return ctx.replyWithHTML(
+        "Format salah.\nGunakan: <code>nomor;lokasi_vps;token;[username]</code>",
+        { parse_mode: "HTML" }
+      );
+    }
+    const num = Number(parts[0]);
+    if (!Number.isInteger(num)) {
+      return ctx.replyWithHTML("Nomor tidak valid.");
+    }
+    const lokasi_vps = parts[1];
+    const token = parts[2];
+    const username = parts[3] || "";
+
+    if (!isValidToken(token)) {
+      return ctx.replyWithHTML(
+        "❌ Token tidak valid.\nMinimal 5 karakter dan tidak boleh spasi.",
+        { parse_mode: "HTML" }
+      );
+    }
+
+    if (!updateBotItem(category, num - 1, { lokasi_vps, username, token })) {
+      return ctx.replyWithHTML("Index bot tidak ditemukan.");
+    }
+
+    setState(userId, { mode: "bot_category_menu", currentCategory: category });
+
+    const msg =
+      "✅ Data bot berhasil di-update.\n\n" +
+      buildBotCategoryText(category);
+    return ctx.replyWithHTML(msg, botItemsMenuKeyboard());
+  }
+
+  // ===== HAPUS ITEM BOT =====
+  if (mode === "bot_item_delete") {
+    if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+    const category = state.currentCategory;
+    const num = Number(text);
+    if (!Number.isInteger(num)) {
+      return ctx.replyWithHTML(
+        "Nomor tidak valid. Kirim angka saja, contoh: <code>1</code>",
+        { parse_mode: "HTML" }
+      );
+    }
+
+    if (!deleteBotItem(category, num - 1)) {
+      return ctx.replyWithHTML("Index bot tidak ditemukan.");
+    }
+
+    setState(userId, { mode: "bot_category_menu", currentCategory: category });
+
+    const msg =
+      "✅ Bot berhasil dihapus.\n\n" + buildBotCategoryText(category);
+    return ctx.replyWithHTML(msg, botItemsMenuKeyboard());
   }
 
   // ===== DEFAULT =====
