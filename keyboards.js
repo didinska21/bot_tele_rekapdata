@@ -1,6 +1,6 @@
 // keyboards.js
 const { Markup } = require("telegraf");
-const { BOTS } = require("./data");
+const { getCategoryNames } = require("./data");
 
 // /start, menu utama
 const mainMenuKeyboard = () =>
@@ -8,7 +8,7 @@ const mainMenuKeyboard = () =>
     .resize()
     .oneTime(false);
 
-// ketika berada di menu List Token
+// List Token (CRUD token)
 const tokensMenuKeyboard = () =>
   Markup.keyboard([
     ["➕ Tambah", "🗑 Hapus"],
@@ -17,7 +17,7 @@ const tokensMenuKeyboard = () =>
     .resize()
     .oneTime(false);
 
-// ketika pilih Tambah Token → pilih Satuan / Massal
+// Pilih cara tambah token (satuan / massal)
 const tokensAddMenuKeyboard = () =>
   Markup.keyboard([
     ["➕ Satuan", "📥 Massal"],
@@ -26,8 +26,8 @@ const tokensAddMenuKeyboard = () =>
     .resize()
     .oneTime(false);
 
-// MENU DAFTAR BOT: reply keyboard di bawah (CRUD)
-const botsMenuKeyboard = () =>
+// Daftar Bot – level kategori (CRUD kategori)
+const botsCategoriesMenuKeyboard = () =>
   Markup.keyboard([
     ["➕ Tambah", "🗑 Hapus"],
     ["✏️ Edit", "⬅️ Kembali"],
@@ -35,12 +35,27 @@ const botsMenuKeyboard = () =>
     .resize()
     .oneTime(false);
 
-// inline keyboard kategori bot (pin | haven | dll)
+// Daftar Bot – di dalam 1 kategori (CRUD item)
+const botItemsMenuKeyboard = () =>
+  Markup.keyboard([
+    ["➕ Tambah", "🗑 Hapus"],
+    ["✏️ Edit", "⬅️ Kembali"],
+  ])
+    .resize()
+    .oneTime(false);
+
+// Inline keyboard kategori bot (pin | haven | kitsu | ...)
 const daftarBotInlineKeyboard = () => {
-  const names = Object.keys(BOTS);
+  const names = getCategoryNames();
   const rows = [];
 
-  // 2 tombol per baris
+  if (!names.length) {
+    rows.push([
+      Markup.button.callback("Belum ada kategori", "botcat:_none"),
+    ]);
+    return Markup.inlineKeyboard(rows);
+  }
+
   for (let i = 0; i < names.length; i += 2) {
     const row = [];
     row.push(Markup.button.callback(names[i], `botcat:${names[i]}`));
@@ -50,11 +65,6 @@ const daftarBotInlineKeyboard = () => {
     rows.push(row);
   }
 
-  if (!rows.length) {
-    // kalau belum ada kategori, tetap kirim 1 tombol dummy
-    rows.push([Markup.button.callback("Belum ada kategori", "botcat:_none")]);
-  }
-
   return Markup.inlineKeyboard(rows);
 };
 
@@ -62,6 +72,7 @@ module.exports = {
   mainMenuKeyboard,
   tokensMenuKeyboard,
   tokensAddMenuKeyboard,
-  botsMenuKeyboard,
+  botsCategoriesMenuKeyboard,
+  botItemsMenuKeyboard,
   daftarBotInlineKeyboard,
 };
