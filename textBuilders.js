@@ -1,5 +1,5 @@
 // textBuilders.js
-const { TOKENS, BOTS } = require("./data");
+const { TOKENS, BOTS, getCategoryNames } = require("./data");
 
 // list token
 const buildListTokenText = () => {
@@ -21,9 +21,9 @@ const buildListTokenText = () => {
   return lines.join("\n");
 };
 
-// daftar kategori + summary
+// daftar kategori bot
 const buildDaftarBotText = () => {
-  const names = Object.keys(BOTS);
+  const names = getCategoryNames();
   if (!names.length) {
     return "🤖 <b>Daftar Bot</b>\n\nBelum ada kategori bot.";
   }
@@ -35,7 +35,7 @@ const buildDaftarBotText = () => {
   return lines.join("\n");
 };
 
-// list bot dalam satu kategori
+// list item dalam kategori
 const buildBotCategoryText = (category) => {
   const items = BOTS[category] || [];
   if (!items.length) {
