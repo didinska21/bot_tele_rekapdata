@@ -21,22 +21,34 @@ const buildListTokenText = () => {
   return lines.join("\n");
 };
 
-// simple daftar bot (bisa dikembangin)
+// daftar kategori + summary
 const buildDaftarBotText = () => {
   const names = Object.keys(BOTS);
   if (!names.length) {
-    return "🤖 <b>Daftar Bot</b>\n\nBelum ada data bot.";
+    return "🤖 <b>Daftar Bot</b>\n\nBelum ada kategori bot.";
   }
   const lines = ["🤖 <b>Daftar Bot</b>\n"];
   names.forEach((name, i) => {
     lines.push(`${i + 1}. ${name}`);
-    BOTS[name].forEach((b, j) => {
-      lines.push(
-        `   - ${j + 1}. lokasi: ${b.lokasi_vps}, username: ${
-          b.username || "(kosong)"
-        }, token: <code>${b.token}</code>`
-      );
-    });
+  });
+  lines.push("\nKlik salah satu tombol kategori di bawah.");
+  return lines.join("\n");
+};
+
+// list bot dalam satu kategori
+const buildBotCategoryText = (category) => {
+  const items = BOTS[category] || [];
+  if (!items.length) {
+    return `🤖 <b>${category}</b>\n\nBelum ada data bot pada kategori ini.`;
+  }
+  const lines = [`🤖 <b>${category}</b>\n`];
+  items.forEach((b, i) => {
+    lines.push(
+      `${i + 1}.\n` +
+        `lokasi vps: ${b.lokasi_vps || "(kosong)"}\n` +
+        `username: ${b.username || "(kosong)"}\n` +
+        `token: <code>${b.token}</code>\n`
+    );
   });
   return lines.join("\n");
 };
@@ -44,4 +56,5 @@ const buildDaftarBotText = () => {
 module.exports = {
   buildListTokenText,
   buildDaftarBotText,
+  buildBotCategoryText,
 };
