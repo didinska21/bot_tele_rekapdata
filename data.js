@@ -1,10 +1,11 @@
 // data.js
 const { loadJson, saveJson } = require("./storage");
 
-// in-memory + file JSON
-let TOKENS = loadJson("tokens.json", []); // array of {email, token, username}
+// TOKENS: array of { email, token, username, group }
+let TOKENS = loadJson("tokens.json", []);
+
+// BOTS: { [category]: [ { lokasi_vps, username, token } ] }
 let BOTS = loadJson("bots.json", {
-  // contoh default, boleh kamu kosongkan {}
   pin: [],
   haven: [],
   kitsu: [],
@@ -18,7 +19,7 @@ function saveBots() {
   saveJson("bots.json", BOTS);
 }
 
-// ===== TOKEN CRUD =====
+// ===== TOKEN HELPERS =====
 function addToken(obj) {
   TOKENS.push(obj);
   saveTokens();
@@ -32,6 +33,18 @@ function updateToken(index, obj) {
 function deleteToken(index) {
   TOKENS.splice(index, 1);
   saveTokens();
+}
+
+// token by group ("irwan" / "din" dll)
+function getTokensByGroup(groupName) {
+  const list = [];
+  TOKENS.forEach((t, i) => {
+    const g = t.group || "irwan"; // default ke irwan kalau belum ada group
+    if (g === groupName) {
+      list.push({ index: i, token: t });
+    }
+  });
+  return list;
 }
 
 // ===== BOT CATEGORY & ITEM CRUD =====
@@ -50,7 +63,7 @@ function addCategory(name) {
     saveBots();
     return true;
   }
-  return false; // sudah ada
+  return false;
 }
 
 function renameCategory(oldName, newName) {
@@ -95,10 +108,11 @@ function deleteBotItem(category, index) {
 module.exports = {
   TOKENS,
   BOTS,
-  // token ops
+  // tokens
   addToken,
   updateToken,
   deleteToken,
+  getTokensByGroup,
   // bots
   getCategoryNames,
   getCategoryNameByIndex,
