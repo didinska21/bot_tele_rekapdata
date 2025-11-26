@@ -1,21 +1,27 @@
 // textBuilders.js
-const { TOKENS, BOTS, getCategoryNames } = require("./data");
+const {
+  TOKENS,
+  BOTS,
+  getCategoryNames,
+  getTokensByGroup,
+} = require("./data");
 
-// list token
-const buildListTokenText = () => {
-  if (!TOKENS.length) {
-    return "🔐 <b>List Token</b>\n\nBelum ada data token.";
+// list token per grup (irwan / din)
+const buildListTokenTextByGroup = (group) => {
+  const list = getTokensByGroup(group);
+  if (!list.length) {
+    return `🔐 <b>List Token (${group})</b>\n\nBelum ada data token untuk grup ini.`;
   }
-  const lines = ["🔐 <b>List Token</b>\n"];
-  TOKENS.forEach((item, i) => {
-    const username = item.username || "(kosong)";
-    const email = item.email || "(kosong)";
-    const token = item.token || "(kosong)";
+  const lines = [`🔐 <b>List Token (${group})</b>\n`];
+  list.forEach(({ token }, i) => {
+    const username = token.username || "(kosong)";
+    const email = token.email || "(kosong)";
+    const t = token.token || "(kosong)";
     lines.push(
       `${i + 1}.\n` +
         `username: ${username}\n` +
         `email: ${email}\n` +
-        `token: <code>${token}</code>\n`
+        `token: <code>${t}</code>\n`
     );
   });
   return lines.join("\n");
@@ -35,7 +41,7 @@ const buildDaftarBotText = () => {
   return lines.join("\n");
 };
 
-// list item dalam kategori
+// list item dalam kategori bot
 const buildBotCategoryText = (category) => {
   const items = BOTS[category] || [];
   if (!items.length) {
@@ -54,7 +60,7 @@ const buildBotCategoryText = (category) => {
 };
 
 module.exports = {
-  buildListTokenText,
+  buildListTokenTextByGroup,
   buildDaftarBotText,
   buildBotCategoryText,
 };
