@@ -9,10 +9,15 @@ const {
   tokensMenuKeyboard,
   tokensAddMenuKeyboard,
   botsMenuKeyboard,
+  daftarBotInlineKeyboard,
 } = require("./keyboards");
-const { buildListTokenText, buildDaftarBotText } = require("./textBuilders");
+const {
+  buildListTokenText,
+  buildDaftarBotText,
+  buildBotCategoryText,
+} = require("./textBuilders");
 
-// validasi sederhana
+// ===== VALIDASI =====
 const isValidEmail = (email) => {
   const re = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
   return re.test(email);
@@ -25,7 +30,7 @@ const isValidToken = (token) => {
   return true;
 };
 
-// YAML-ish parser untuk tambah massal
+// YAML-ish parser (massal)
 const parseYamlishTokens = (text) => {
   const lines = text.split(/\r?\n/);
   const blocks = [];
@@ -38,8 +43,8 @@ const parseYamlishTokens = (text) => {
         blocks.push(current);
         current = [];
       }
-    } else {
-      if (trimmed !== "") current.push(trimmed);
+    } else if (trimmed !== "") {
+      current.push(trimmed);
     }
   }
   if (current.length > 0) blocks.push(current);
@@ -61,7 +66,6 @@ const parseYamlishTokens = (text) => {
     });
 
     const blockNum = idx + 1;
-
     if (!obj.email || !isValidEmail(obj.email)) {
       errors.push(`Blok #${blockNum}: email tidak valid.`);
       return;
@@ -70,7 +74,6 @@ const parseYamlishTokens = (text) => {
       errors.push(`Blok #${blockNum}: token tidak valid.`);
       return;
     }
-
     items.push(obj);
   });
 
@@ -79,7 +82,7 @@ const parseYamlishTokens = (text) => {
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// ====== /start ======
+// ===== /start =====
 bot.start(async (ctx) => {
   const userId = ctx.from.id;
   clearState(userId);
@@ -91,16 +94,43 @@ bot.start(async (ctx) => {
   );
 });
 
-// ====== TEXT HANDLER UTAMA ======
+// ===== CALLBACK UNTUK INLINE (DAFTAR BOT) =====
+bot.on("callback_query", async (ctx) => {
+  const userId = ctx.from.id;
+  const data = ctx.update.callback_query.data;
+  log("CBQ", { userId, data });
+
+  // klik "Belum ada kategori"
+  if (data === "botcat:_none") {
+    return ctx.answerCbQuery("Belum ada kategori bot.").catch(() => {});
+  }
+
+  if (data.startsWith("botcat:")) {
+    const category = data.split(":")[1];
+    const msg = buildBotCategoryText(category);
+    // edit pesan daftar bot supaya isinya jadi list kategori terpilih,
+    // tapi inline keyboard kategori tetap muncul
+    return ctx
+      .editMessageText(msg, {
+        parse_mode: "HTML",
+        ...daftarBotInlineKeyboard(),
+      })
+      .catch(() => {});
+  }
+
+  await ctx.answerCbQuery().catch(() => {});
+});
+
+// ===== TEXT HANDLER =====
 bot.on("text", async (ctx) => {
   const userId = ctx.from.id;
   const text = ctx.message.text.trim();
-  let state = getState(userId);
+  const state = getState(userId);
   const mode = state.mode;
 
   log("MSG", { userId, mode, text });
 
-  // ====== MENU UTAMA via reply keyboard (hanya kalau tidak sedang di mode wizard) ======
+  // ===== MENU UTAMA =====
   if (!mode) {
     if (text === "🔐 List Token") {
       setState(userId, { mode: "tokens_menu" });
@@ -109,19 +139,22 @@ bot.on("text", async (ctx) => {
     }
     if (text === "🤖 Daftar Bot") {
       setState(userId, { mode: "bots_menu" });
-      const msg = buildDaftarBotText();
-      return ctx.replyWithHTML(msg, botsMenuKeyboard());
+      // 1) kirim pesan dengan inline kategori bot
+      await ctx.replyWithHTML(
+        buildDaftarBotText(),
+        daftarBotInlineKeyboard()
+      );
+      // 2) kirim pesan untuk set reply keyboard CRUD di bawah
+      return ctx.reply("Pilih menu di bawah untuk kelola bot:", botsMenuKeyboard());
     }
   }
 
-  // =======================
-  // MODE: MENU LIST TOKEN
-  // =======================
+  // ==============
+  // MENU LIST TOKEN
+  // ==============
   if (mode === "tokens_menu") {
     if (text === "➕ Tambah") {
-      if (!isAdmin(userId)) {
-        return ctx.replyWithHTML(adminErrorMessage(userId));
-      }
+      if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
       setState(userId, { mode: "token_add_choice" });
       return ctx.replyWithHTML(
         "Pilih cara tambah data token:",
@@ -130,9 +163,7 @@ bot.on("text", async (ctx) => {
     }
 
     if (text === "🗑 Hapus") {
-      if (!isAdmin(userId)) {
-        return ctx.replyWithHTML(adminErrorMessage(userId));
-      }
+      if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
       setState(userId, { mode: "deleting_token_select" });
       const msg =
         buildListTokenText() +
@@ -141,9 +172,7 @@ bot.on("text", async (ctx) => {
     }
 
     if (text === "✏️ Edit") {
-      if (!isAdmin(userId)) {
-        return ctx.replyWithHTML(adminErrorMessage(userId));
-      }
+      if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
       setState(userId, { mode: "editing_token_select" });
       const msg =
         buildListTokenText() +
@@ -160,14 +189,10 @@ bot.on("text", async (ctx) => {
     }
   }
 
-  // =========================
-  // MODE: PILIH TAMBAH TOKEN
-  // =========================
+  // ===== PILIH TAMBAH TOKEN (SATUAN/MASSAL) =====
   if (mode === "token_add_choice") {
     if (text === "➕ Satuan") {
-      if (!isAdmin(userId)) {
-        return ctx.replyWithHTML(adminErrorMessage(userId));
-      }
+      if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
       setState(userId, {
         mode: "adding_token_single_email",
         tempToken: {},
@@ -179,9 +204,7 @@ bot.on("text", async (ctx) => {
     }
 
     if (text === "📥 Massal") {
-      if (!isAdmin(userId)) {
-        return ctx.replyWithHTML(adminErrorMessage(userId));
-      }
+      if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
       setState(userId, { mode: "adding_token_bulk" });
       return ctx.replyWithHTML(
         "📥 <b>Tambah Data Massal (YAML-ish)</b>\n\n" +
@@ -204,13 +227,10 @@ bot.on("text", async (ctx) => {
     }
   }
 
-  // =========================
-  // WIZARD: TAMBAH TOKEN SATUAN
-  // =========================
+  // ===== WIZARD TAMBAH TOKEN SATUAN =====
   if (mode === "adding_token_single_email") {
-    if (!isAdmin(userId)) {
-      return ctx.replyWithHTML(adminErrorMessage(userId));
-    }
+    if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+
     if (!isValidEmail(text)) {
       return ctx.replyWithHTML(
         "❌ Format email tidak valid.\n" +
@@ -219,10 +239,12 @@ bot.on("text", async (ctx) => {
         { parse_mode: "HTML" }
       );
     }
+
     setState(userId, {
       mode: "adding_token_single_token",
       tempToken: { email: text, token: "", username: "" },
     });
+
     return ctx.replyWithHTML(
       "🔑 Silakan kirim token:\nContoh: <code>123456:ABCDEF</code>",
       { parse_mode: "HTML" }
@@ -230,9 +252,8 @@ bot.on("text", async (ctx) => {
   }
 
   if (mode === "adding_token_single_token") {
-    if (!isAdmin(userId)) {
-      return ctx.replyWithHTML(adminErrorMessage(userId));
-    }
+    if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+
     if (!isValidToken(text)) {
       return ctx.replyWithHTML(
         "❌ Format token tidak valid.\n" +
@@ -241,12 +262,15 @@ bot.on("text", async (ctx) => {
         { parse_mode: "HTML" }
       );
     }
+
     const temp = getState(userId).tempToken || {};
     temp.token = text;
+
     setState(userId, {
       mode: "adding_token_single_username",
       tempToken: temp,
     });
+
     return ctx.replyWithHTML(
       "👤 Kirim username (opsional).\n\n" +
         "Jika tidak ingin mengisi, ketik: <code>skip</code>",
@@ -255,23 +279,26 @@ bot.on("text", async (ctx) => {
   }
 
   if (mode === "adding_token_single_username") {
-    if (!isAdmin(userId)) {
-      return ctx.replyWithHTML(adminErrorMessage(userId));
-    }
+    if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+
     const temp = getState(userId).tempToken || {};
     let username = "";
+
     if (text.toLowerCase() === "skip") {
       username = "";
     } else {
       username = text.trim();
       if (!username) {
         return ctx.replyWithHTML(
-          "❌ Username tidak valid.\nKirim username atau ketik <code>skip</code>.",
+          "❌ Username tidak valid.\n" +
+            "Kirim username atau ketik <code>skip</code>.",
           { parse_mode: "HTML" }
         );
       }
     }
+
     temp.username = username;
+
     TOKENS.push({
       email: temp.email,
       token: temp.token,
@@ -285,13 +312,10 @@ bot.on("text", async (ctx) => {
     return ctx.replyWithHTML(msg, tokensMenuKeyboard());
   }
 
-  // =========================
-  // WIZARD: TAMBAH TOKEN MASSAL
-  // =========================
+  // ===== TAMBAH MASSAL =====
   if (mode === "adding_token_bulk") {
-    if (!isAdmin(userId)) {
-      return ctx.replyWithHTML(adminErrorMessage(userId));
-    }
+    if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+
     const { items, errors } = parseYamlishTokens(text);
 
     if (errors.length > 0) {
@@ -326,13 +350,10 @@ bot.on("text", async (ctx) => {
     return ctx.replyWithHTML(msg, tokensMenuKeyboard());
   }
 
-  // =========================
-  // EDIT TOKEN (PILIH NOMOR)
-  // =========================
+  // ===== EDIT TOKEN PILIH NOMOR =====
   if (mode === "editing_token_select") {
-    if (!isAdmin(userId)) {
-      return ctx.replyWithHTML(adminErrorMessage(userId));
-    }
+    if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+
     const num = Number(text);
     if (!Number.isInteger(num)) {
       return ctx.replyWithHTML(
@@ -343,8 +364,10 @@ bot.on("text", async (ctx) => {
     if (num < 1 || num > TOKENS.length) {
       return ctx.replyWithHTML("Nomor di luar range.");
     }
+
     const item = TOKENS[num - 1];
     setState(userId, { mode: "editing_token_input", editIndex: num - 1 });
+
     return ctx.replyWithHTML(
       "Data saat ini:\n" +
         `username: ${item.username || "(kosong)"}\n` +
@@ -356,16 +379,16 @@ bot.on("text", async (ctx) => {
     );
   }
 
-  // EDIT TOKEN (INPUT BARU)
+  // ===== EDIT TOKEN INPUT BARU =====
   if (mode === "editing_token_input") {
-    if (!isAdmin(userId)) {
-      return ctx.replyWithHTML(adminErrorMessage(userId));
-    }
+    if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+
     const idx = getState(userId).editIndex;
     if (idx == null || idx >= TOKENS.length) {
       setState(userId, { mode: "tokens_menu" });
       return ctx.replyWithHTML("Index token tidak ditemukan.");
     }
+
     const parts = text.split(";").map((s) => s.trim());
     if (parts.length < 2) {
       return ctx.replyWithHTML(
@@ -373,6 +396,7 @@ bot.on("text", async (ctx) => {
         { parse_mode: "HTML" }
       );
     }
+
     const email = parts[0];
     const token = parts[1];
     const username = parts[2] || "";
@@ -397,13 +421,10 @@ bot.on("text", async (ctx) => {
     return ctx.replyWithHTML(msg, tokensMenuKeyboard());
   }
 
-  // =========================
-  // HAPUS TOKEN
-  // =========================
+  // ===== HAPUS TOKEN =====
   if (mode === "deleting_token_select") {
-    if (!isAdmin(userId)) {
-      return ctx.replyWithHTML(adminErrorMessage(userId));
-    }
+    if (!isAdmin(userId)) return ctx.replyWithHTML(adminErrorMessage(userId));
+
     const num = Number(text);
     if (!Number.isInteger(num)) {
       return ctx.replyWithHTML(
@@ -414,6 +435,7 @@ bot.on("text", async (ctx) => {
     if (num < 1 || num > TOKENS.length) {
       return ctx.replyWithHTML("Nomor di luar range.");
     }
+
     const deleted = TOKENS.splice(num - 1, 1)[0];
     setState(userId, { mode: "tokens_menu" });
 
@@ -425,45 +447,50 @@ bot.on("text", async (ctx) => {
     return ctx.replyWithHTML(msg, tokensMenuKeyboard());
   }
 
-  // =========================
-  // MENU DAFTAR BOT (SIMPLE)
-  // =========================
+  // ===== MENU DAFTAR BOT (CRUD – sementara placeholder logika) =====
   if (mode === "bots_menu") {
-    if (text === "📂 Lihat Bot") {
-      const msg = buildDaftarBotText();
-      return ctx.replyWithHTML(msg, botsMenuKeyboard());
-    }
-
-    if (text === "➕ Tambah Bot") {
+    if (text === "➕ Tambah") {
+      // nanti bisa dikembangin (tambah kategori / tambah bot)
       return ctx.replyWithHTML(
-        "Untuk sementara, tambah bot bisa kamu lakukan manual di file data.js ya.\n" +
-          "Strukturnya sama seperti contoh di sana. (Bagian ini bisa dikembangkan lagi nanti.)",
+        "Fitur tambah di Daftar Bot belum diimplementasi penuh.\n" +
+          "Sekarang baru tampilan kategori & list per kategori.",
         botsMenuKeyboard()
       );
     }
 
-    if (text === "🗑 Hapus Bot") {
+    if (text === "🗑 Hapus") {
       return ctx.replyWithHTML(
-        "Fitur hapus bot belum diimplementasi penuh di script ini.\n" +
-          "Kamu bisa hapus dari file data.js terlebih dahulu.",
+        "Fitur hapus di Daftar Bot belum diimplementasi penuh.\n" +
+          "Bisa kamu tambahkan sendiri di index.js (mode 'bots_menu').",
+        botsMenuKeyboard()
+      );
+    }
+
+    if (text === "✏️ Edit") {
+      return ctx.replyWithHTML(
+        "Fitur edit di Daftar Bot belum diimplementasi penuh.\n" +
+          "Nanti bisa diatur untuk rename kategori / edit bot per kategori.",
         botsMenuKeyboard()
       );
     }
 
     if (text === "⬅️ Kembali") {
       clearState(userId);
-      return ctx.replyWithHTML("Kembali ke menu utama.", mainMenuKeyboard());
+      return ctx.replyWithHTML(
+        "Kembali ke menu utama.",
+        mainMenuKeyboard()
+      );
     }
   }
 
-  // ========== DEFAULT ==========
+  // ===== DEFAULT =====
   return ctx.replyWithHTML(
     "Kalau mau mulai lagi, kirim /start lalu pilih menu di bawah.",
     mainMenuKeyboard()
   );
 });
 
-// ====== LOGGING ERROR GLOBAL ======
+// ===== LOG ERROR GLOBAL =====
 bot.catch((err, ctx) => {
   log("BOT ERROR", err.message, "ctx:", ctx.updateType);
 });
@@ -475,12 +502,11 @@ process.on("uncaughtException", (err) => {
   log("UNCAUGHT_EXCEPTION", err);
 });
 
-// ====== RUN BOT ======
+// ===== RUN =====
 bot.launch().then(() => {
   log("Bot sudah jalan 🚀");
 });
 
-// supaya kalau di VPS pakai systemd / pm2, stop-nya rapih
 process.once("SIGINT", () => {
   log("SIGINT diterima, stop bot");
   bot.stop("SIGINT");
