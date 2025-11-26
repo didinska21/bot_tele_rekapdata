@@ -1,5 +1,4 @@
 // state.js
-// Menyimpan mode / context per user
 const userStates = new Map(); // key: userId, value: { mode, ... }
 
 const getState = (userId) => userStates.get(userId) || {};
